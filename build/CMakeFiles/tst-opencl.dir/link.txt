@@ -1,0 +1,1 @@
+/usr/bin/c++ "CMakeFiles/tst-opencl.dir/main.cpp.o" -o tst-opencl  /usr/lib/x86_64-linux-gnu/libOpenCL.so 

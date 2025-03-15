@@ -1,0 +1,3 @@
+/home/krizzin/Desktop/opencl-proj/build/CMakeFiles/tst-opencl.dir
+/home/krizzin/Desktop/opencl-proj/build/CMakeFiles/edit_cache.dir
+/home/krizzin/Desktop/opencl-proj/build/CMakeFiles/rebuild_cache.dir
