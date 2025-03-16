@@ -12,10 +12,11 @@ set_target_properties(${PROJECT_NAME} PROPERTIES C_STANDARD 11
                                                  C_STANDARD_REQUIRED ON
                                                  C_EXTENSIONS OFF)
 
-add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-                    COMMAND ${CMAKE_COMMAND} -E copy
-                    ${CMAKE_SOURCE_DIR}/kernel.cl 
-                    ${CMAKE_BINARY_DIR}/kernel.cl)
+                                                 
+#add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+#                    COMMAND ${CMAKE_COMMAND} -E copy
+#                    ${CMAKE_SOURCE_DIR}/kernel.cl 
+#                    ${CMAKE_BINARY_DIR}/kernel.cl)
 
 
 

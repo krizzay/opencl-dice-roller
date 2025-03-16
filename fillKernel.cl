@@ -20,13 +20,12 @@ ulong next_x(ulong s[4]) {
 	return result;
 }
 
-__kernel void arr_sum(__global ulong* state, __global uint* output){
+__kernel void fill(__global ulong* state, __global uint* output){
 	int idx = get_global_id(0);
 	ulong s[4];
 	for(int i = 0; i < 4; i++){
 		s[i] = state[idx*i];
 	}
 
-	//output[idx] = next_x(s) % 20;
 	output[idx] = next_x(s) % 20;
 } 
