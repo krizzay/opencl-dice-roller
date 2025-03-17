@@ -173,9 +173,9 @@ bool setup(const char* _fillKernelFileName, const char* _compKernelFileName){
 
     programBuildResult = clBuildProgram( compProgram, 1, &device, "", nullptr, nullptr);
     if (programBuildResult != CL_SUCCESS){
-        char log[1024];
+        char log[3024];
         size_t logLength;
-        cl_int programBuildInfoResult = clGetProgramBuildInfo(compProgram, device, CL_PROGRAM_BUILD_LOG, 1024, log, &logLength);
+        cl_int programBuildInfoResult = clGetProgramBuildInfo(compProgram, device, CL_PROGRAM_BUILD_LOG, 3024, log, &logLength);
 
         std::cout << "log len - " << logLength << std::endl;
         std::cout <<  "log:\n" << log << std::endl << std::endl;
