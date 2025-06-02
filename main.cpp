@@ -101,6 +101,7 @@ bool setup(const char* _fillKernelFileName, const char* _compKernelFileName){
                 unsigned long numComputeUnits;
                 size_t computeUnitsLen;
                 cl_int deviceInfoResult = clGetDeviceInfo( devices[j], CL_DEVICE_MAX_COMPUTE_UNITS, sizeof(cl_uint), &numComputeUnits, &computeUnitsLen);
+                cl_int atomicInfoRes = clGetDeviceInfo( devices[j], CL_DEVICE_ATOMIC_ORDER_SEQ_CST, sizeof(cl_int))
                 if(deviceInfoResult == CL_SUCCESS){
                     // currently picks first device, rank by mem size ig?
                     //std::cout << "device found!!\n";
@@ -108,6 +109,10 @@ bool setup(const char* _fillKernelFileName, const char* _compKernelFileName){
                     break;
                 }
             }
+
+            char version[128];
+            clGetDeviceInfo(device, CL_DEVICE_VERSION, sizeof(version), version, NULL);
+            printf("OpenCL version: %s\n", version);
             
         }
     }
@@ -137,7 +142,7 @@ bool setup(const char* _fillKernelFileName, const char* _compKernelFileName){
         return false;
     }
 
-    cl_int programBuildResult = clBuildProgram( fillProgram, 1, &device, "", nullptr, nullptr);
+    cl_int programBuildResult = clBuildProgram( fillProgram, 1, &device, "-cl-std=CL3.0\0", nullptr, nullptr);
     if (programBuildResult != CL_SUCCESS){
         char log[1024];
         size_t logLength;
@@ -171,19 +176,22 @@ bool setup(const char* _fillKernelFileName, const char* _compKernelFileName){
         return false;
     }
 
-    programBuildResult = clBuildProgram( compProgram, 1, &device, "", nullptr, nullptr);
+    programBuildResult = clBuildProgram( compProgram, 1, &device, "-cl-std=CL3.0\0", nullptr, nullptr);
     if (programBuildResult != CL_SUCCESS){
-        char log[3024];
+        char log[2048];
         size_t logLength;
-        cl_int programBuildInfoResult = clGetProgramBuildInfo(compProgram, device, CL_PROGRAM_BUILD_LOG, 3024, log, &logLength);
+        cl_int programBuildInfoResult = clGetProgramBuildInfo(compProgram, device, CL_PROGRAM_BUILD_LOG, 2048, log, &logLength);
 
         std::cout << "log len - " << logLength << std::endl;
-        std::cout <<  "log:\n" << log << std::endl << std::endl;
+        std::cout <<  "log:\n" << log << std::endl << "*end of log*" << std::endl;
+
         if (programBuildInfoResult != CL_SUCCESS){
             std::cerr << "Failed to build program!(comparison)\n Failed with error (" << programBuildInfoResult << ")\n";
             return false;
         }
     }
+
+    //invalid value could be fuckinnnnn ummmm the value of the global tally
 
     kernelResult;              // this string must mach entry function name
 	compKernel = clCreateKernel( compProgram, "comp", &kernelResult);
@@ -245,6 +253,7 @@ int main(int argc, char* argv[])
 
     if (setup("../fillKernel.cl", "../compKernel.cl") != true){
         std::cerr << "Failed to set up open cl\n";
+        cleanup();
         return 1;
     }
 
@@ -346,7 +355,7 @@ int main(int argc, char* argv[])
     //enqueu kernel
     cl_int enqueueKernelResult = clEnqueueNDRangeKernel(commandQueue, fillKernel, 1, 0, &globalWorkSize, &localWorkSize, 0, nullptr, nullptr);
     if (enqueueKernelResult != CL_SUCCESS){
-        std::cerr << "Failed to enqueue kernel!\n Failed with error (" << enqueueKernelResult << ")\n";
+        std::cerr << "Failed to enqueue kernel(fill a)!\n Failed with error (" << enqueueKernelResult << ")\n";
         return 1;
     }
 
@@ -366,6 +375,43 @@ int main(int argc, char* argv[])
     }
     // enqueue kernel
     enqueueKernelResult = clEnqueueNDRangeKernel(commandQueue, fillKernel, 1, 0, &globalWorkSize, &localWorkSize, 0, nullptr, nullptr);
+    if (enqueueKernelResult != CL_SUCCESS){
+        std::cerr << "Failed to enqueue kernel(fill b)!\n Failed with error (" << enqueueKernelResult << ")\n";
+        return 1;
+    }
+
+    clFinish(commandQueue);
+
+    kernalArgAResult = clSetKernelArg(compKernel, 0, sizeof(cl_mem), &a);
+    if (kernalArgAResult != CL_SUCCESS){
+        std::cerr << "Failed to set kernal arg(a for comp)!\n Failed with error (" << kernalArgAResult << ")\n";
+        return 1;
+    }
+    cl_int kernelArgASizeResult = clSetKernelArg(compKernel, 1, sizeof(uint), &sqRolls);
+    if (kernelArgASizeResult != CL_SUCCESS){
+        std::cerr << "Failed to set kernal arg(a size)!\n Failed with error (" << kernelArgASizeResult << ")\n";
+        return 1;
+    }
+    kernalArgBResult = clSetKernelArg(compKernel, 2, sizeof(cl_mem), &b);
+    if (kernalArgBResult != CL_SUCCESS){
+        std::cerr << "Failed to set kernal arg(b for comp)!\n Failed with error (" << kernalArgBResult << ")\n";
+        return 1;
+    }
+    // local buffer
+    cl_int kernalArgLTallyResult = clSetKernelArg(compKernel, 3, localWorkSize * 20 * sizeof(ulong), nullptr);
+    if (kernalArgLTallyResult != CL_SUCCESS){
+        std::cerr << "Failed to set kernal arg(local tally)!\n Failed with error (" << kernalArgLTallyResult << ")\n";
+        return 1;
+    }
+
+    cl_int kernalArgGTallyResult = clSetKernelArg(compKernel, 4, sizeof(cl_mem), &tally);
+    if (kernalArgGTallyResult != CL_SUCCESS){
+        std::cerr << "Failed to set kernal arg(global tally)!\n Failed with error (" << kernalArgGTallyResult << ")\n";
+        return 1;
+    }
+
+    // enqueue kernel
+    enqueueKernelResult = clEnqueueNDRangeKernel(commandQueue, compKernel, 1, 0, &globalWorkSize, &localWorkSize, 0, nullptr, nullptr);
     if (enqueueKernelResult != CL_SUCCESS){
         std::cerr << "Failed to enqueue kernel!\n Failed with error (" << enqueueKernelResult << ")\n";
         return 1;

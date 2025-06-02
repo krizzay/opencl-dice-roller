@@ -8,7 +8,7 @@ set(CMAKE_DEPENDS_LANGUAGES
 
 # The set of dependency files which are needed:
 set(CMAKE_DEPENDS_DEPENDENCY_FILES
-  "/home/krizzin/Desktop/opencl-proj/main.cpp" "CMakeFiles/tst-opencl.dir/main.cpp.o" "gcc" "CMakeFiles/tst-opencl.dir/main.cpp.o.d"
+  "/home/krizzin/Desktop/pogamin/opencl-proj/main.cpp" "CMakeFiles/tst-opencl.dir/main.cpp.o" "gcc" "CMakeFiles/tst-opencl.dir/main.cpp.o.d"
   )
 
 # Targets to which this target links which contain Fortran sources.
