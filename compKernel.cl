@@ -59,7 +59,8 @@ __kernel void comp(__global uint* a, uint aSize, __global uint* b,__local ulong*
     //if(lIdx == 0) atomic
     if(lIdx == 0){
         for(int i = 0; i < 20; i++){
-            atomic_fetch_add(tally[i], lTally[i]);
+            //atomic_fetch_add(tally[i], lTally[i]);
+            atomic_add(&tally[i], lTally[i]);
         }
     }
 } 

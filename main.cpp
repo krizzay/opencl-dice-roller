@@ -45,7 +45,7 @@ cl_kernel compKernel;
 cl_mem a;
 cl_mem b;
 cl_mem randState;
-cl_mem results;
+cl_mem tally;
 
 size_t globalWorkSize = 256;
 size_t localWorkSize = 32;
@@ -101,7 +101,6 @@ bool setup(const char* _fillKernelFileName, const char* _compKernelFileName){
                 unsigned long numComputeUnits;
                 size_t computeUnitsLen;
                 cl_int deviceInfoResult = clGetDeviceInfo( devices[j], CL_DEVICE_MAX_COMPUTE_UNITS, sizeof(cl_uint), &numComputeUnits, &computeUnitsLen);
-                cl_int atomicInfoRes = clGetDeviceInfo( devices[j], CL_DEVICE_ATOMIC_ORDER_SEQ_CST, sizeof(cl_int))
                 if(deviceInfoResult == CL_SUCCESS){
                     // currently picks first device, rank by mem size ig?
                     //std::cout << "device found!!\n";
@@ -147,9 +146,18 @@ bool setup(const char* _fillKernelFileName, const char* _compKernelFileName){
         char log[1024];
         size_t logLength;
         cl_int programBuildInfoResult = clGetProgramBuildInfo(fillProgram, device, CL_PROGRAM_BUILD_LOG, 1024, log, &logLength);
+
+        if(logLength >= 1024){
+            char newlog[logLength];
+            cl_int programBuildInfoResult = clGetProgramBuildInfo(fillProgram, device, CL_PROGRAM_BUILD_LOG, logLength, newlog, &logLength);
+
+            std::cout << "log len - " << logLength << std::endl;
+            std::cout <<  "newlog:\n" << newlog << std::endl << std::endl;
+        }else{
+            std::cout << "log len - " << logLength << std::endl;
+            std::cout <<  "a log:\n" << log << std::endl << std::endl;
+        }
         
-        std::cout << "log len - " << logLength << std::endl;
-        std::cout <<  "log:\n" << log << std::endl << std::endl;
         if (programBuildInfoResult != CL_SUCCESS){
             std::cerr << "Failed to build program!(fill)\n Failed with error (" << programBuildInfoResult << ")\n";
             return false;
@@ -178,12 +186,15 @@ bool setup(const char* _fillKernelFileName, const char* _compKernelFileName){
 
     programBuildResult = clBuildProgram( compProgram, 1, &device, "-cl-std=CL3.0\0", nullptr, nullptr);
     if (programBuildResult != CL_SUCCESS){
-        char log[2048];
         size_t logLength;
-        cl_int programBuildInfoResult = clGetProgramBuildInfo(compProgram, device, CL_PROGRAM_BUILD_LOG, 2048, log, &logLength);
+        cl_int programBuildInfoResult = clGetProgramBuildInfo(compProgram, device, CL_PROGRAM_BUILD_LOG, 0, nullptr, &logLength);
+
+        char log[logLength];
+
+        programBuildInfoResult = clGetProgramBuildInfo(compProgram, device, CL_PROGRAM_BUILD_LOG, logLength, log, &logLength);
 
         std::cout << "log len - " << logLength << std::endl;
-        std::cout <<  "log:\n" << log << std::endl << "*end of log*" << std::endl;
+        std::cout <<  "a log:\n" << log << std::endl << "*end of log*" << std::endl;
 
         if (programBuildInfoResult != CL_SUCCESS){
             std::cerr << "Failed to build program!(comparison)\n Failed with error (" << programBuildInfoResult << ")\n";
@@ -207,8 +218,8 @@ bool setup(const char* _fillKernelFileName, const char* _compKernelFileName){
 void cleanup(){
     clReleaseMemObject(a);
     clReleaseMemObject(b);
+    clReleaseMemObject(tally);
     clReleaseMemObject(randState);
-    clReleaseMemObject(results);
     clReleaseKernel(fillKernel);
     clReleaseProgram(fillProgram);
     clReleaseKernel(compKernel);
@@ -231,6 +242,14 @@ after this is done further changes can be done, i just wanna get this done first
 
 int main(int argc, char* argv[])
 {
+
+/*
+	const auto end = chrono::high_resolution_clock::now();
+	const std::chrono::duration<double, std::milli> diff = end - start;
+	double time = chrono::duration<double>(diff).count();
+*/
+    const auto start = std::chrono::high_resolution_clock::now();
+
     uint64_t rolls;
     if( argc == 1){
         std::cout << "not enough arguments, ya need to add how many rolls dum dum\n";
@@ -244,6 +263,9 @@ int main(int argc, char* argv[])
         }
         else if (*argv[2] == 'm'){
             rolls *= 1000000;
+        }
+        else if (*argv[2] == 'b'){
+            rolls *= 1000000000;
         }
         else{
             std::cerr << "bad mult dumbass\n";
@@ -315,7 +337,7 @@ int main(int argc, char* argv[])
 
 
     cl_int tallyBufferResult;
-    cl_mem tally = clCreateBuffer(context, CL_MEM_WRITE_ONLY, 20 * sizeof(uint64_t), nullptr, &tallyBufferResult);
+    tally = clCreateBuffer(context, CL_MEM_READ_WRITE, 20 * sizeof(uint64_t), nullptr, &tallyBufferResult);
     if (tallyBufferResult != CL_SUCCESS){
         std::cerr << "Failed to create tally buffer!\n Failed with error (" << enqueueAResult << ")\n";
         return 1;
@@ -337,7 +359,7 @@ int main(int argc, char* argv[])
     localWorkSize = getLocalWorkSize(maxLocalWorkSize, globalWorkSize);
     std::cout << "global size - " << globalWorkSize << " local size - " << localWorkSize << std::endl;
 
-
+    const auto mid = std::chrono::high_resolution_clock::now();
 
     // fill a
     // set kernel arguments
@@ -382,6 +404,7 @@ int main(int argc, char* argv[])
 
     clFinish(commandQueue);
 
+    //comparison
     kernalArgAResult = clSetKernelArg(compKernel, 0, sizeof(cl_mem), &a);
     if (kernalArgAResult != CL_SUCCESS){
         std::cerr << "Failed to set kernal arg(a for comp)!\n Failed with error (" << kernalArgAResult << ")\n";
@@ -431,10 +454,37 @@ int main(int argc, char* argv[])
 
     clFinish(commandQueue);
 
+    ulong tallyData[20];
+
+    cl_int tallyReadRes = clEnqueueReadBuffer(commandQueue, tally, CL_TRUE, 0, 20 * sizeof(ulong), tallyData, 0, nullptr, nullptr);
+    if(tallyReadRes != CL_SUCCESS){
+        std::cerr << "Failed to enqueue buffer read!(tally)\n Failed with error (" << tallyReadRes << ")\n";
+        return 1;
+    }
+
+    clFinish(commandQueue);
+
+    const auto end = std::chrono::high_resolution_clock::now();
+	const std::chrono::duration<double, std::milli> totTime = end - start;
+    const std::chrono::duration<double, std::milli> computationTime = end - mid;
+	double totalTime = std::chrono::duration<double>(totTime).count();
+    double workTime = std::chrono::duration<double>(computationTime).count();
+
+    std::cout << "\nTotal time taken: " << totalTime << "\n" << "Total work time: " << workTime << "\n(" << "overhead: " << totalTime - workTime << ")" << std::endl << std::endl;
+
     // display results
     std::cout << "results!: \n";
-    for(int i = 0; i < sqRolls; i++){
+/*     for(int i = 0; i < sqRolls; i++){
         std::cout << i << "\ta:" << aData[i] << "\t\tb:" << bData[i] << std::endl;
+    }  */
+
+    std::cout << std::endl;
+
+    for(int i = 0; i < 20; i++){
+        ulong tst = (ulong)(rolls);
+        double percent = ((long double)tallyData[i] / rolls) * 100.0;
+        //std::cout << "tally data: " << tallyData[i] << " rolls: " << rolls << " quotient: " << tallyData[i] / (ulong)rolls << "\n\n";
+        std::cout << i+1 << "\t: " << tallyData[i] << "\t: " << percent << "%" << std::endl;
     }
  
     cleanup();
