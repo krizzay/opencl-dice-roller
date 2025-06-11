@@ -1,4 +1,5 @@
 #include <iostream>
+#include <string>
 #include <fstream>
 #include <cmath>
 #include <chrono>
@@ -101,6 +102,8 @@ bool setup(const char* _fillKernelFileName, const char* _compKernelFileName){
                 unsigned long numComputeUnits;
                 size_t computeUnitsLen;
                 cl_int deviceInfoResult = clGetDeviceInfo( devices[j], CL_DEVICE_MAX_COMPUTE_UNITS, sizeof(cl_uint), &numComputeUnits, &computeUnitsLen);
+
+                //cl_int deviceInfoResTwo = clGetDeviceInfo( devices[j], CL_MAX_GR)  // was thinking of checking for max fuckin uhhhh global work size if there is one?
                 if(deviceInfoResult == CL_SUCCESS){
                     // currently picks first device, rank by mem size ig?
                     //std::cout << "device found!!\n";
@@ -229,6 +232,13 @@ void cleanup(){
     //clReleaseDevice(device); // not needed??
 }
 
+int inline checkRes(cl_int res, std::string txt){
+    if(res != CL_SUCCESS){
+        std::cerr << txt << "\n Failed with error (" << res << ")\n";
+        cleanup();
+        return 1;
+    }
+}
 /*
 a, b buffers will be global
 for now generate all randomiser state on cpu and pass it as another buffer
@@ -238,6 +248,14 @@ another kernel will compare a section of b with all of a and record results into
     keep a private tally, then at the very end update the global tally
 
 after this is done further changes can be done, i just wanna get this done first
+*/
+
+/*
+pretty sure rn im runnig into a stack overflow
+allocate all buffers on the heap first,
+refactor all the yucky yuck yuck code,
+then idk figure out how to optimise the state generation step, cuz like a lot of it is cpu side when it could be gpu side but like a hash function would be the same each time
+maybe you generate a single long cpu side and set it as an arg in th kernel and bitwise or it with the hash or some shit
 */
 
 int main(int argc, char* argv[])
@@ -302,12 +320,8 @@ int main(int argc, char* argv[])
         std::cerr << "Failed to create buffer rand state!\n Failed with error (" << randStateResult << ")\n";
         return 1;
     }
-    cl_int enqueueStateResult = clEnqueueWriteBuffer(commandQueue, randState, CL_TRUE, 0, sqRolls * 4 * sizeof(ulong), s, 0, nullptr, nullptr);
-    if (enqueueStateResult != CL_SUCCESS){
-        std::cerr << "Failed to enqueue buffer write (state)!\n Failed with error (" << enqueueStateResult << ")\n";
-        return 1;
-    }
-
+    checkRes( clEnqueueWriteBuffer(commandQueue, randState, CL_TRUE, 0, sqRolls * 4 * sizeof(ulong), s, 0, nullptr, nullptr),
+            "Failed to enqueue buffer write (state)!");
 
     cl_int aDataResult;
     a = clCreateBuffer(context, CL_MEM_READ_WRITE, sqRolls * sizeof(uint), nullptr, &aDataResult);
@@ -316,12 +330,8 @@ int main(int argc, char* argv[])
         return 1;
     }
     // TODO: consider switching out write buffer as theyll be empty rn and thats just fine but idk
-    cl_int enqueueAResult = clEnqueueWriteBuffer(commandQueue, a, CL_TRUE, 0, sqRolls * sizeof(uint), aData, 0, nullptr, nullptr);
-    if (enqueueAResult != CL_SUCCESS){
-        std::cerr << "Failed to enqueue buffer write (a)!\n Failed with error (" << enqueueAResult << ")\n";
-        return 1;
-    }
-
+    checkRes( clEnqueueWriteBuffer(commandQueue, a, CL_TRUE, 0, sqRolls * sizeof(uint), aData, 0, nullptr, nullptr),
+            "Failed to enqueue buffer write (a)!");
 
     cl_int bDataResult;
     b = clCreateBuffer(context, CL_MEM_READ_WRITE, sqRolls * sizeof(uint), nullptr, &bDataResult);
@@ -329,12 +339,8 @@ int main(int argc, char* argv[])
         std::cerr << "Failed to create buffer b!\n Failed with error (" << bDataResult << ")\n";
         return 1;
     }
-    cl_int enqueueBResult = clEnqueueWriteBuffer(commandQueue, b, CL_TRUE, 0, sqRolls * sizeof(uint), bData, 0, nullptr, nullptr);
-    if (enqueueBResult != CL_SUCCESS){
-        std::cerr << "Failed to enqueue buffer write (b)!\n Failed with error (" << enqueueBResult << ")\n";
-        return 1;
-    }
-
+    checkRes( clEnqueueWriteBuffer(commandQueue, b, CL_TRUE, 0, sqRolls * sizeof(uint), bData, 0, nullptr, nullptr),
+            "Failed to enqueue buffer write (b)!");
 
     cl_int tallyBufferResult;
     tally = clCreateBuffer(context, CL_MEM_READ_WRITE, 20 * sizeof(uint64_t), nullptr, &tallyBufferResult);
@@ -347,11 +353,8 @@ int main(int argc, char* argv[])
     // query max local work group size
     size_t sumin;
     size_t maxLocalWorkSize;
-    cl_int lWorkSizeResult = clGetKernelWorkGroupInfo(fillKernel, device, CL_KERNEL_WORK_GROUP_SIZE, sizeof(size_t), &maxLocalWorkSize, &sumin); 
-    if ( lWorkSizeResult != CL_SUCCESS){
-        std::cerr << "Failed to query work group info!\n Failed with error (" << lWorkSizeResult << ")\n";
-        return 1;
-    }
+    checkRes( clGetKernelWorkGroupInfo(fillKernel, device, CL_KERNEL_WORK_GROUP_SIZE, sizeof(size_t), &maxLocalWorkSize, &sumin),
+            "Failed to query work group info!");
     std::cout << "max local work size - " << maxLocalWorkSize << std::endl;
 
     // set work sizes
@@ -363,104 +366,73 @@ int main(int argc, char* argv[])
 
     // fill a
     // set kernel arguments
-    cl_int kernalArgStateResult = clSetKernelArg(fillKernel, 0, sizeof(cl_mem), &randState);
-    if (kernalArgStateResult != CL_SUCCESS){
-        std::cerr << "Failed to set kernal arg(state)!\n Failed with error (" << kernalArgStateResult << ")\n";
-        return 1;
-    }
-    cl_int kernalArgAResult = clSetKernelArg(fillKernel, 1, sizeof(cl_mem), &a);
+    checkRes( clSetKernelArg(fillKernel, 0, sizeof(cl_mem), &randState),
+            "Failed to set kernal arg(state)!");
+
+    checkRes(clSetKernelArg(fillKernel, 0, sizeof(cl_mem), &a),
+             "Failed to set kernal arg(a)!");
+
+/*     cl_int kernalArgAResult = clSetKernelArg(fillKernel, 1, sizeof(cl_mem), &a);
     if (kernalArgAResult != CL_SUCCESS){
         std::cerr << "Failed to set kernal arg(a)!\n Failed with error (" << kernalArgAResult << ")\n";
         return 1;
-    }
+    } */
 
     //enqueu kernel
-    cl_int enqueueKernelResult = clEnqueueNDRangeKernel(commandQueue, fillKernel, 1, 0, &globalWorkSize, &localWorkSize, 0, nullptr, nullptr);
-    if (enqueueKernelResult != CL_SUCCESS){
-        std::cerr << "Failed to enqueue kernel(fill a)!\n Failed with error (" << enqueueKernelResult << ")\n";
-        return 1;
-    }
+    checkRes( clEnqueueNDRangeKernel(commandQueue, fillKernel, 1, 0, &globalWorkSize, &localWorkSize, 0, nullptr, nullptr),
+            "Failed to enqueue kernel(fill a)!");
 
     clFinish(commandQueue);
 
     // fill b
     // set kernel arguments
-    kernalArgStateResult = clSetKernelArg(fillKernel, 0, sizeof(cl_mem), &randState);
-    if (kernalArgStateResult != CL_SUCCESS){
-        std::cerr << "Failed to set kernal arg(state)!\n Failed with error (" << kernalArgStateResult << ")\n";
-        return 1;
-    }
-    cl_int kernalArgBResult = clSetKernelArg(fillKernel, 1, sizeof(cl_mem), &b);
-    if (kernalArgBResult != CL_SUCCESS){
-        std::cerr << "Failed to set kernal arg(b)!\n Failed with error (" << kernalArgBResult << ")\n";
-        return 1;
-    }
+
+    checkRes( clSetKernelArg(fillKernel, 0, sizeof(cl_mem), &randState),
+            "Failed to set kernal arg(state)!");
+
+    checkRes( clSetKernelArg(fillKernel, 1, sizeof(cl_mem), &b),
+            "Failed to set kernal arg(b)!");
+
     // enqueue kernel
-    enqueueKernelResult = clEnqueueNDRangeKernel(commandQueue, fillKernel, 1, 0, &globalWorkSize, &localWorkSize, 0, nullptr, nullptr);
-    if (enqueueKernelResult != CL_SUCCESS){
-        std::cerr << "Failed to enqueue kernel(fill b)!\n Failed with error (" << enqueueKernelResult << ")\n";
-        return 1;
-    }
+    checkRes( clEnqueueNDRangeKernel(commandQueue, fillKernel, 1, 0, &globalWorkSize, &localWorkSize, 0, nullptr, nullptr),
+            "Failed to enqueue kernel(fill b)!");
 
     clFinish(commandQueue);
 
     //comparison
-    kernalArgAResult = clSetKernelArg(compKernel, 0, sizeof(cl_mem), &a);
-    if (kernalArgAResult != CL_SUCCESS){
-        std::cerr << "Failed to set kernal arg(a for comp)!\n Failed with error (" << kernalArgAResult << ")\n";
-        return 1;
-    }
-    cl_int kernelArgASizeResult = clSetKernelArg(compKernel, 1, sizeof(uint), &sqRolls);
-    if (kernelArgASizeResult != CL_SUCCESS){
-        std::cerr << "Failed to set kernal arg(a size)!\n Failed with error (" << kernelArgASizeResult << ")\n";
-        return 1;
-    }
-    kernalArgBResult = clSetKernelArg(compKernel, 2, sizeof(cl_mem), &b);
-    if (kernalArgBResult != CL_SUCCESS){
-        std::cerr << "Failed to set kernal arg(b for comp)!\n Failed with error (" << kernalArgBResult << ")\n";
-        return 1;
-    }
-    // local buffer
-    cl_int kernalArgLTallyResult = clSetKernelArg(compKernel, 3, localWorkSize * 20 * sizeof(ulong), nullptr);
-    if (kernalArgLTallyResult != CL_SUCCESS){
-        std::cerr << "Failed to set kernal arg(local tally)!\n Failed with error (" << kernalArgLTallyResult << ")\n";
-        return 1;
-    }
+    checkRes( clSetKernelArg(compKernel, 0, sizeof(cl_mem), &a), 
+            "Failed to set kernal arg(a for comp)!");
 
-    cl_int kernalArgGTallyResult = clSetKernelArg(compKernel, 4, sizeof(cl_mem), &tally);
-    if (kernalArgGTallyResult != CL_SUCCESS){
-        std::cerr << "Failed to set kernal arg(global tally)!\n Failed with error (" << kernalArgGTallyResult << ")\n";
-        return 1;
-    }
+    checkRes( clSetKernelArg(compKernel, 1, sizeof(uint), &sqRolls),
+            "Failed to set kernal arg(a size)!");
+
+    checkRes( clSetKernelArg(compKernel, 2, sizeof(cl_mem), &b),
+            "Failed to set kernal arg(b for comp)!");
+
+    // local buffer
+    checkRes( clSetKernelArg(compKernel, 3, localWorkSize * 20 * sizeof(ulong), nullptr),
+            "Failed to set kernal arg(local tally)!");
+
+    checkRes( clSetKernelArg(compKernel, 4, sizeof(cl_mem), &tally),
+            "Failed to set kernal arg(global tally)!");
 
     // enqueue kernel
-    enqueueKernelResult = clEnqueueNDRangeKernel(commandQueue, compKernel, 1, 0, &globalWorkSize, &localWorkSize, 0, nullptr, nullptr);
-    if (enqueueKernelResult != CL_SUCCESS){
-        std::cerr << "Failed to enqueue kernel!\n Failed with error (" << enqueueKernelResult << ")\n";
-        return 1;
-    }
+    checkRes( clEnqueueNDRangeKernel(commandQueue, compKernel, 1, 0, &globalWorkSize, &localWorkSize, 0, nullptr, nullptr),
+            "Failed to enqueue kernel!");
 
     // enqueue reads
-    cl_int aReadRes = clEnqueueReadBuffer(commandQueue, a, CL_TRUE, 0, sqRolls * sizeof(uint), aData, 0, nullptr, nullptr);
-    if (aReadRes != CL_SUCCESS){
-        std::cerr << "Failed to enqueue buffer read!(a)\n Failed with error (" << aReadRes << ")\n";
-        return 1;
-    }
-    cl_int bReadRes = clEnqueueReadBuffer(commandQueue, b, CL_TRUE, 0, sqRolls * sizeof(uint), bData, 0, nullptr, nullptr);
-    if (aReadRes != CL_SUCCESS){
-        std::cerr << "Failed to enqueue buffer read!(b)\n Failed with error (" << aReadRes << ")\n";
-        return 1;
-    }
+    checkRes( clEnqueueReadBuffer(commandQueue, a, CL_TRUE, 0, sqRolls * sizeof(uint), aData, 0, nullptr, nullptr),
+            "Failed to enqueue buffer read!(a)");
+
+    checkRes( clEnqueueReadBuffer(commandQueue, b, CL_TRUE, 0, sqRolls * sizeof(uint), bData, 0, nullptr, nullptr),
+            "Failed to enqueue buffer read!(b)");
 
     clFinish(commandQueue);
 
     ulong tallyData[20];
 
-    cl_int tallyReadRes = clEnqueueReadBuffer(commandQueue, tally, CL_TRUE, 0, 20 * sizeof(ulong), tallyData, 0, nullptr, nullptr);
-    if(tallyReadRes != CL_SUCCESS){
-        std::cerr << "Failed to enqueue buffer read!(tally)\n Failed with error (" << tallyReadRes << ")\n";
-        return 1;
-    }
+    checkRes( clEnqueueReadBuffer(commandQueue, tally, CL_TRUE, 0, 20 * sizeof(ulong), tallyData, 0, nullptr, nullptr),
+            "Failed to enqueue buffer read!(tally)");
 
     clFinish(commandQueue);
 

@@ -219,7 +219,7 @@ CMAKE_VERBOSE_MAKEFILE:BOOL=FALSE
 OpenCL_INCLUDE_DIR:PATH=/usr/include
 
 //Path to a library.
-OpenCL_LIBRARY:FILEPATH=/usr/lib/x86_64-linux-gnu/libOpenCL.so
+OpenCL_LIBRARY:FILEPATH=OpenCL_LIBRARY-NOTFOUND
 
 //Value Computed by CMake
 tst-opencl_BINARY_DIR:STATIC=/home/krizzin/Desktop/opencl-proj/build
@@ -380,14 +380,8 @@ CMAKE_TAPI-ADVANCED:INTERNAL=1
 CMAKE_UNAME:INTERNAL=/usr/bin/uname
 //ADVANCED property for variable: CMAKE_VERBOSE_MAKEFILE
 CMAKE_VERBOSE_MAKEFILE-ADVANCED:INTERNAL=1
-//Details about finding OpenCL
-FIND_PACKAGE_MESSAGE_DETAILS_OpenCL:INTERNAL=[/usr/lib/x86_64-linux-gnu/libOpenCL.so][/usr/include][v3.0()]
 //Have symbol CL_VERSION_3_0
 OPENCL_VERSION_3_0:INTERNAL=1
-//ADVANCED property for variable: OpenCL_INCLUDE_DIR
-OpenCL_INCLUDE_DIR-ADVANCED:INTERNAL=1
-//ADVANCED property for variable: OpenCL_LIBRARY
-OpenCL_LIBRARY-ADVANCED:INTERNAL=1
 //linker supports push/pop state
 _CMAKE_CXX_LINKER_PUSHPOP_STATE_SUPPORTED:INTERNAL=TRUE
 //linker supports push/pop state
