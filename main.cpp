@@ -1,6 +1,7 @@
 #include <iostream>
 #include <string>
 #include <fstream>
+#include <vector>
 #include <cmath>
 #include <chrono>
 #include <CL/cl.h>
@@ -24,6 +25,15 @@ static std::string readFile(const char* fileName){
 	f.close();
 
 	return std::move(res);
+}
+
+void hostComp(uint* a, uint* b, int l, ulong* t){  
+    for(int i = 0; i < l; i++){
+        for(int j = 0; j < l; j++){
+            //std::cout << "comparing " << a[i] << " with " << b[j] << " choosing " << std::max(a[i], b[j]) << std::endl;
+            t[std::max(a[i], b[j])]++;
+        }
+    }
 }
 
 //	splitmix64
@@ -298,9 +308,10 @@ int main(int argc, char* argv[])
     }
 
     int sqRolls = sqrt(rolls);
-    /* std::cout << "sqrolls = " << sqRolls << std::endl;
-    return 0; */
-    ulong s[sqRolls*4];
+    std::cout << "rolls: " << rolls << "\t\t sq rolls: " << sqRolls << std::endl;
+
+    std::vector<ulong> s;
+    s.resize(sqRolls*4);
 
     // initialise randomiser state
     auto now = std::chrono::system_clock::now();
@@ -311,8 +322,11 @@ int main(int argc, char* argv[])
 	}
 
     // setup buffers
-    uint aData[sqRolls];
-    uint bData[sqRolls];
+
+    std::vector<uint> aData;
+    aData.resize(sqRolls, 0);
+    std::vector<uint> bData;
+    bData.resize(sqRolls, 0);
 
     cl_int randStateResult;
     randState = clCreateBuffer(context, CL_MEM_READ_ONLY, sqRolls * 4 * sizeof(ulong), nullptr, &randStateResult);
@@ -320,7 +334,7 @@ int main(int argc, char* argv[])
         std::cerr << "Failed to create buffer rand state!\n Failed with error (" << randStateResult << ")\n";
         return 1;
     }
-    checkRes( clEnqueueWriteBuffer(commandQueue, randState, CL_TRUE, 0, sqRolls * 4 * sizeof(ulong), s, 0, nullptr, nullptr),
+    checkRes( clEnqueueWriteBuffer(commandQueue, randState, CL_TRUE, 0, sqRolls * 4 * sizeof(ulong), s.data(), 0, nullptr, nullptr),
             "Failed to enqueue buffer write (state)!");
 
     cl_int aDataResult;
@@ -329,8 +343,8 @@ int main(int argc, char* argv[])
         std::cerr << "Failed to create buffer a!\n Failed with error (" << aDataResult << ")\n";
         return 1;
     }
-    // TODO: consider switching out write buffer as theyll be empty rn and thats just fine but idk
-    checkRes( clEnqueueWriteBuffer(commandQueue, a, CL_TRUE, 0, sqRolls * sizeof(uint), aData, 0, nullptr, nullptr),
+    // TODO: consider switching out write buffer as theyll be empty rn and thats just fine but idk // well they might have garbage data? idk
+    checkRes( clEnqueueWriteBuffer(commandQueue, a, CL_TRUE, 0, sqRolls * sizeof(uint), aData.data(), 0, nullptr, nullptr),
             "Failed to enqueue buffer write (a)!");
 
     cl_int bDataResult;
@@ -339,15 +353,19 @@ int main(int argc, char* argv[])
         std::cerr << "Failed to create buffer b!\n Failed with error (" << bDataResult << ")\n";
         return 1;
     }
-    checkRes( clEnqueueWriteBuffer(commandQueue, b, CL_TRUE, 0, sqRolls * sizeof(uint), bData, 0, nullptr, nullptr),
+    checkRes( clEnqueueWriteBuffer(commandQueue, b, CL_TRUE, 0, sqRolls * sizeof(uint), bData.data(), 0, nullptr, nullptr),
             "Failed to enqueue buffer write (b)!");
+
+    ulong tallyData[20] = {0};
 
     cl_int tallyBufferResult;
     tally = clCreateBuffer(context, CL_MEM_READ_WRITE, 20 * sizeof(uint64_t), nullptr, &tallyBufferResult);
     if (tallyBufferResult != CL_SUCCESS){
-        std::cerr << "Failed to create tally buffer!\n Failed with error (" << enqueueAResult << ")\n";
+        std::cerr << "Failed to create tally buffer!\n Failed with error (" << tallyBufferResult << ")\n";
         return 1;
     }
+    checkRes( clEnqueueWriteBuffer(commandQueue, tally, CL_TRUE, 0, 20 * sizeof(uint64_t), tallyData, 0, nullptr, nullptr),
+            "Failed to enqueue buffer write(tally)!" );
 
 
     // query max local work group size
@@ -368,15 +386,10 @@ int main(int argc, char* argv[])
     // set kernel arguments
     checkRes( clSetKernelArg(fillKernel, 0, sizeof(cl_mem), &randState),
             "Failed to set kernal arg(state)!");
-
-    checkRes(clSetKernelArg(fillKernel, 0, sizeof(cl_mem), &a),
+    checkRes(clSetKernelArg(fillKernel, 1, sizeof(cl_mem), &a),
              "Failed to set kernal arg(a)!");
 
-/*     cl_int kernalArgAResult = clSetKernelArg(fillKernel, 1, sizeof(cl_mem), &a);
-    if (kernalArgAResult != CL_SUCCESS){
-        std::cerr << "Failed to set kernal arg(a)!\n Failed with error (" << kernalArgAResult << ")\n";
-        return 1;
-    } */
+
 
     //enqueu kernel
     checkRes( clEnqueueNDRangeKernel(commandQueue, fillKernel, 1, 0, &globalWorkSize, &localWorkSize, 0, nullptr, nullptr),
@@ -421,20 +434,23 @@ int main(int argc, char* argv[])
             "Failed to enqueue kernel!");
 
     // enqueue reads
-    checkRes( clEnqueueReadBuffer(commandQueue, a, CL_TRUE, 0, sqRolls * sizeof(uint), aData, 0, nullptr, nullptr),
+    checkRes( clEnqueueReadBuffer(commandQueue, a, CL_TRUE, 0, sqRolls * sizeof(uint), aData.data(), 0, nullptr, nullptr),
             "Failed to enqueue buffer read!(a)");
 
-    checkRes( clEnqueueReadBuffer(commandQueue, b, CL_TRUE, 0, sqRolls * sizeof(uint), bData, 0, nullptr, nullptr),
+    checkRes( clEnqueueReadBuffer(commandQueue, b, CL_TRUE, 0, sqRolls * sizeof(uint), bData.data(), 0, nullptr, nullptr),
             "Failed to enqueue buffer read!(b)");
 
     clFinish(commandQueue);
-
-    ulong tallyData[20];
 
     checkRes( clEnqueueReadBuffer(commandQueue, tally, CL_TRUE, 0, 20 * sizeof(ulong), tallyData, 0, nullptr, nullptr),
             "Failed to enqueue buffer read!(tally)");
 
     clFinish(commandQueue);
+
+
+
+    ulong hostTally[20] = {0};
+     hostComp(aData.data(), bData.data(), sqRolls, hostTally);
 
     const auto end = std::chrono::high_resolution_clock::now();
 	const std::chrono::duration<double, std::milli> totTime = end - start;
@@ -446,10 +462,6 @@ int main(int argc, char* argv[])
 
     // display results
     std::cout << "results!: \n";
-/*     for(int i = 0; i < sqRolls; i++){
-        std::cout << i << "\ta:" << aData[i] << "\t\tb:" << bData[i] << std::endl;
-    }  */
-
     std::cout << std::endl;
 
     for(int i = 0; i < 20; i++){
@@ -457,6 +469,17 @@ int main(int argc, char* argv[])
         double percent = ((long double)tallyData[i] / rolls) * 100.0;
         //std::cout << "tally data: " << tallyData[i] << " rolls: " << rolls << " quotient: " << tallyData[i] / (ulong)rolls << "\n\n";
         std::cout << i+1 << "\t: " << tallyData[i] << "\t: " << percent << "%" << std::endl;
+    }
+
+    std::cout << std::endl;
+    std::cout << "results!()host comp: \n";
+    std::cout << std::endl;
+
+    for(int i = 0; i < 20; i++){
+        ulong tst = (ulong)(rolls);
+        double percent = ((long double)hostTally[i] / rolls) * 100.0;
+        //std::cout << "tally data: " << tallyData[i] << " rolls: " << rolls << " quotient: " << tallyData[i] / (ulong)rolls << "\n\n";
+        std::cout << i+1 << "\t: " << hostTally[i] << "\t: " << percent << "%" << std::endl;
     }
  
     cleanup();
