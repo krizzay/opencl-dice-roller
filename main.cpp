@@ -4,6 +4,9 @@
 #include <vector>
 #include <cmath>
 #include <chrono>
+#include <bitset>
+#include <array>
+#include <numeric>
 #include <CL/cl.h>
 
 static std::string readFile(const char* fileName){
@@ -44,17 +47,34 @@ uint64_t next_s(uint64_t &x) {
 	return z ^ (z >> 31);
 }
 
+static inline uint64_t rotl(const uint64_t x, int k) {
+	return (x << k) | (x >> (64 - k));
+}
+
+uint64_t next_x(uint64_t* s) {
+	const uint64_t result = s[0] + s[3];
+
+	const uint64_t t = s[1] << 17;
+
+	s[2] ^= s[0];
+	s[3] ^= s[1];
+	s[1] ^= s[2];
+	s[0] ^= s[3];
+
+	s[2] ^= t;
+
+	s[3] = rotl(s[3], 45);
+
+	return result;
+}
+
 cl_context context;
 cl_command_queue commandQueue;
 cl_device_id device;
 
-cl_program fillProgram;
-cl_kernel fillKernel;
-cl_program compProgram;
-cl_kernel compKernel;
+cl_program rollProgram;
+cl_kernel rollKernel;
 
-cl_mem a;
-cl_mem b;
 cl_mem randState;
 cl_mem tally;
 
@@ -90,7 +110,7 @@ int getLocalWorkSize(size_t maxLocalSize, int globalSize){
     return result;
 }
 
-bool setup(const char* _fillKernelFileName, const char* _compKernelFileName){
+bool setup(const char* _fillKernelFileName){
     cl_int platformResult = CL_SUCCESS;
     cl_uint numPlatforms = 0;
     cl_platform_id platforms[64];
@@ -112,6 +132,7 @@ bool setup(const char* _fillKernelFileName, const char* _compKernelFileName){
                 unsigned long numComputeUnits;
                 size_t computeUnitsLen;
                 cl_int deviceInfoResult = clGetDeviceInfo( devices[j], CL_DEVICE_MAX_COMPUTE_UNITS, sizeof(cl_uint), &numComputeUnits, &computeUnitsLen);
+                std::cout << numComputeUnits << " compute units on the device\n";
 
                 //cl_int deviceInfoResTwo = clGetDeviceInfo( devices[j], CL_MAX_GR)  // was thinking of checking for max fuckin uhhhh global work size if there is one?
                 if(deviceInfoResult == CL_SUCCESS){
@@ -148,21 +169,21 @@ bool setup(const char* _fillKernelFileName, const char* _compKernelFileName){
     const char* programSource = s.c_str();
     size_t length = 0;
     cl_int programResult;
-    fillProgram = clCreateProgramWithSource(context, 1, &programSource, &length, &programResult);
+    rollProgram = clCreateProgramWithSource(context, 1, &programSource, &length, &programResult);
     if (programResult != CL_SUCCESS){
         std::cerr << "Failed to make program!(fill)\n Failed with error (" << programResult << ")\n";
         return false;
     }
 
-    cl_int programBuildResult = clBuildProgram( fillProgram, 1, &device, "-cl-std=CL3.0\0", nullptr, nullptr);
+    cl_int programBuildResult = clBuildProgram( rollProgram, 1, &device, "-cl-std=CL3.0\0", nullptr, nullptr);
     if (programBuildResult != CL_SUCCESS){
         char log[1024];
         size_t logLength;
-        cl_int programBuildInfoResult = clGetProgramBuildInfo(fillProgram, device, CL_PROGRAM_BUILD_LOG, 1024, log, &logLength);
+        cl_int programBuildInfoResult = clGetProgramBuildInfo(rollProgram, device, CL_PROGRAM_BUILD_LOG, 1024, log, &logLength);
 
         if(logLength >= 1024){
             char newlog[logLength];
-            cl_int programBuildInfoResult = clGetProgramBuildInfo(fillProgram, device, CL_PROGRAM_BUILD_LOG, logLength, newlog, &logLength);
+            cl_int programBuildInfoResult = clGetProgramBuildInfo(rollProgram, device, CL_PROGRAM_BUILD_LOG, logLength, newlog, &logLength);
 
             std::cout << "log len - " << logLength << std::endl;
             std::cout <<  "newlog:\n" << newlog << std::endl << std::endl;
@@ -178,65 +199,20 @@ bool setup(const char* _fillKernelFileName, const char* _compKernelFileName){
     }
 
     cl_int kernelResult;              // this string must mach entry function name
-	fillKernel = clCreateKernel( fillProgram, "fill", &kernelResult);
+	rollKernel = clCreateKernel( rollProgram, "roll", &kernelResult);
     if (programResult != CL_SUCCESS){
         std::cerr << "Failed to make kernel!(fill)\n Failed with error (" << programResult << ")\n";
         return false;
     }
 
-
-
-    // create comparison program and kernel
-    s = readFile(_compKernelFileName);
-    programSource = s.c_str();
-    length = 0;
-    programResult = CL_SUCCESS;
-    compProgram = clCreateProgramWithSource(context, 1, &programSource, &length, &programResult);
-    if (programResult != CL_SUCCESS){
-        std::cerr << "Failed to make program!(comparison)\n Failed with error (" << programResult << ")\n";
-        return false;
-    }
-
-    programBuildResult = clBuildProgram( compProgram, 1, &device, "-cl-std=CL3.0\0", nullptr, nullptr);
-    if (programBuildResult != CL_SUCCESS){
-        size_t logLength;
-        cl_int programBuildInfoResult = clGetProgramBuildInfo(compProgram, device, CL_PROGRAM_BUILD_LOG, 0, nullptr, &logLength);
-
-        char log[logLength];
-
-        programBuildInfoResult = clGetProgramBuildInfo(compProgram, device, CL_PROGRAM_BUILD_LOG, logLength, log, &logLength);
-
-        std::cout << "log len - " << logLength << std::endl;
-        std::cout <<  "a log:\n" << log << std::endl << "*end of log*" << std::endl;
-
-        if (programBuildInfoResult != CL_SUCCESS){
-            std::cerr << "Failed to build program!(comparison)\n Failed with error (" << programBuildInfoResult << ")\n";
-            return false;
-        }
-    }
-
-    //invalid value could be fuckinnnnn ummmm the value of the global tally
-
-    kernelResult;              // this string must mach entry function name
-	compKernel = clCreateKernel( compProgram, "comp", &kernelResult);
-    if (kernelResult != CL_SUCCESS){
-        std::cerr << "Failed to make kernel!(comparison)\n Failed with error (" << kernelResult << ")\n";
-        return false;
-    }
-
-
     return true;
 }
 
 void cleanup(){
-    clReleaseMemObject(a);
-    clReleaseMemObject(b);
     clReleaseMemObject(tally);
     clReleaseMemObject(randState);
-    clReleaseKernel(fillKernel);
-    clReleaseProgram(fillProgram);
-    clReleaseKernel(compKernel);
-    clReleaseProgram(compProgram);
+    clReleaseKernel(rollKernel);
+    clReleaseProgram(rollProgram);
     clReleaseCommandQueue(commandQueue);
     clReleaseContext(context);
     //clReleaseDevice(device); // not needed??
@@ -249,112 +225,125 @@ int inline checkRes(cl_int res, std::string txt){
         return 1;
     }
 }
-/*
-a, b buffers will be global
-for now generate all randomiser state on cpu and pass it as another buffer
-one kernel will generate x amount of numbers into a and b <- im here rn
-another kernel will compare a section of b with all of a and record results into the global tally
-    copy section of b into private memory actually, copare wit all of a (hopefully we get a bunch of cache hits)
-    keep a private tally, then at the very end update the global tally
-
-after this is done further changes can be done, i just wanna get this done first
-*/
 
 /*
-pretty sure rn im runnig into a stack overflow
-allocate all buffers on the heap first,
-refactor all the yucky yuck yuck code,
-then idk figure out how to optimise the state generation step, cuz like a lot of it is cpu side when it could be gpu side but like a hash function would be the same each time
-maybe you generate a single long cpu side and set it as an arg in th kernel and bitwise or it with the hash or some shit
+    each thread will generate a variable x amount of results into a local tally which will be copied to the global tally regressively like before
 */
 
 int main(int argc, char* argv[])
 {
-
-/*
-	const auto end = chrono::high_resolution_clock::now();
-	const std::chrono::duration<double, std::milli> diff = end - start;
-	double time = chrono::duration<double>(diff).count();
-*/
     const auto start = std::chrono::high_resolution_clock::now();
 
     uint64_t rolls;
-    if( argc == 1){
-        std::cout << "not enough arguments, ya need to add how many rolls dum dum\n";
+    if( argc != 4){
+        std::cout << "wrong amount of args, should be {rolls} {mult} {rolls per thread}\n";
         return 1;
     }
     rolls = atol(argv[1]);
 
-    if( argc == 3){
-        if( *argv[2] == 'k'){
-            rolls *= 1000;
-        }
-        else if (*argv[2] == 'm'){
-            rolls *= 1000000;
-        }
-        else if (*argv[2] == 'b'){
-            rolls *= 1000000000;
-        }
-        else{
-            std::cerr << "bad mult dumbass\n";
-            return 1;
-        }
+    if( *argv[2] == 'k'){
+        rolls *= 1000;
     }
+    else if (*argv[2] == 'm'){
+        rolls *= 1000000;
+    }
+    else if (*argv[2] == 'b'){
+        rolls *= 1000000000;
+    }
+    else{
+        std::cerr << "bad mult dumbass\n";
+        return 1;
+    }
+    
+    uint64_t rollsPerThread = atol(argv[3]);
 
-    if (setup("../fillKernel.cl", "../compKernel.cl") != true){
+    if (setup("../kernel.cl") != true){
         std::cerr << "Failed to set up open cl\n";
         cleanup();
         return 1;
     }
 
-    int sqRolls = sqrt(rolls);
-    std::cout << "rolls: " << rolls << "\t\t sq rolls: " << sqRolls << std::endl;
+    std::cout << "start" << std::endl;
 
-    std::vector<ulong> s;
-    s.resize(sqRolls*4);
+    std::vector<ulong> state;
+    state.resize(4); 
 
     // initialise randomiser state
     auto now = std::chrono::system_clock::now();
 	auto epoch = now.time_since_epoch();
 	uint64_t count = epoch.count();
-	for(int i = 0; i < sqRolls*4; i++){
-		s[i] = next_s(count);
+
+	for(int i = 0; i < /*rolls*/4; i++){
+		state[i] = next_s(count);
 	}
 
-    // setup buffers
+    // shhhh you dont see this
+    /* uint64_t s[4] = {0, 0, 0, 1};
 
-    std::vector<uint> aData;
-    aData.resize(sqRolls, 0);
-    std::vector<uint> bData;
-    bData.resize(sqRolls, 0);
+    std::bitset<256> set(1);
 
+    std::vector<std::bitset<256>> transition;
+    std::vector<std::bitset<256>> transitionFinal;
+    transitionFinal.resize(256);
+
+    for(int i = 0; i < 256; i++){
+        s[0] = ((set<<192)>>192).to_ulong();
+        s[1] = ((set<<128)>>192).to_ulong();
+        s[2] = ((set<<64)>>192).to_ulong();
+        s[3] = (set>>192).to_ulong();
+
+        //std::cout << "set:\n" << set << std::endl << std::endl;
+        
+        set<<=1;
+
+        next_x(s);
+
+        std::bitset<256> setSequel;
+        std::bitset<256> sa(s[0]);
+        std::bitset<256> sb(s[1]);
+        std::bitset<256> sc(s[2]);
+        std::bitset<256> sd(s[3]);
+
+        setSequel |= sd;
+        setSequel<<= 64;
+        setSequel |= sc;
+        setSequel<<= 64;
+        setSequel |= sb;
+        setSequel<<= 64;
+        setSequel |= sa;
+
+        transition.push_back(setSequel);
+
+        std::cout << setSequel << std::endl;
+        //std::cout << "s:" << s[0] << " " << s[1] << " " << s[2] << " " << s[3] << std::endl;
+    }
+
+    std::cout << std::endl;
+
+    for(int i = 0; i < 256; i++){ // for each in transition
+        for(int j = 0; j < 256; j++){ // for each bit
+            transitionFinal[j][i] = transition[i][j];
+        }
+    }
+
+    for(int i = 0; i < 256; i++){
+        std::cout << transitionFinal[i] << std::endl;
+    }
+
+    // p = {0x9d116f2bb0f0f001, 0x280002bcefd1a5e, 0x4b4edcf26259f85, 0x3c03c3f3ecb19};
+ */
+    
+ // setup buffers
+    
     cl_int randStateResult;
-    randState = clCreateBuffer(context, CL_MEM_READ_ONLY, sqRolls * 4 * sizeof(ulong), nullptr, &randStateResult);
+    randState = clCreateBuffer(context, CL_MEM_READ_ONLY, /*rolls*/ 4 * sizeof(ulong), nullptr, &randStateResult);
     if (randStateResult != CL_SUCCESS){
         std::cerr << "Failed to create buffer rand state!\n Failed with error (" << randStateResult << ")\n";
         return 1;
     }
-    checkRes( clEnqueueWriteBuffer(commandQueue, randState, CL_TRUE, 0, sqRolls * 4 * sizeof(ulong), s.data(), 0, nullptr, nullptr),
+    checkRes( clEnqueueWriteBuffer(commandQueue, randState, CL_TRUE, 0, /*rolls */ 4 * sizeof(ulong), state.data(), 0, nullptr, nullptr),
             "Failed to enqueue buffer write (state)!");
 
-    cl_int aDataResult;
-    a = clCreateBuffer(context, CL_MEM_READ_WRITE, sqRolls * sizeof(uint), nullptr, &aDataResult);
-    if (aDataResult != CL_SUCCESS){
-        std::cerr << "Failed to create buffer a!\n Failed with error (" << aDataResult << ")\n";
-        return 1;
-    }
-    // TODO: consider switching out write buffer as theyll be empty rn and thats just fine but idk // well they might have garbage data? idk
-    checkRes( clEnqueueWriteBuffer(commandQueue, a, CL_TRUE, 0, sqRolls * sizeof(uint), aData.data(), 0, nullptr, nullptr),
-            "Failed to enqueue buffer write (a)!");
-
-    cl_int bDataResult;
-    b = clCreateBuffer(context, CL_MEM_READ_WRITE, sqRolls * sizeof(uint), nullptr, &bDataResult);
-    if (bDataResult != CL_SUCCESS){
-        std::cerr << "Failed to create buffer b!\n Failed with error (" << bDataResult << ")\n";
-        return 1;
-    }
-    checkRes( clEnqueueWriteBuffer(commandQueue, b, CL_TRUE, 0, sqRolls * sizeof(uint), bData.data(), 0, nullptr, nullptr),
-            "Failed to enqueue buffer write (b)!");
 
     ulong tallyData[20] = {0};
 
@@ -366,82 +355,47 @@ int main(int argc, char* argv[])
     }
     checkRes( clEnqueueWriteBuffer(commandQueue, tally, CL_TRUE, 0, 20 * sizeof(uint64_t), tallyData, 0, nullptr, nullptr),
             "Failed to enqueue buffer write(tally)!" );
+    
 
 
     // query max local work group size
     size_t sumin;
     size_t maxLocalWorkSize;
-    checkRes( clGetKernelWorkGroupInfo(fillKernel, device, CL_KERNEL_WORK_GROUP_SIZE, sizeof(size_t), &maxLocalWorkSize, &sumin),
+    checkRes( clGetKernelWorkGroupInfo(rollKernel, device, CL_KERNEL_WORK_GROUP_SIZE, sizeof(size_t), &maxLocalWorkSize, &sumin),
             "Failed to query work group info!");
     std::cout << "max local work size - " << maxLocalWorkSize << std::endl;
 
+    // figure out the reps per thread and the remainder
+    //uint64_t reps = rolls / rollsPerThread;
+    uint64_t remainder = rolls % rollsPerThread;
+
     // set work sizes
-    globalWorkSize = sqRolls; // each thread will generate one number into a
+    globalWorkSize = rolls / rollsPerThread;
     localWorkSize = getLocalWorkSize(maxLocalWorkSize, globalWorkSize);
-    std::cout << "global size - " << globalWorkSize << " local size - " << localWorkSize << std::endl;
+    
+    std::cout << "global size - " << globalWorkSize << " local size - " << localWorkSize << std::endl << "remainder : " << remainder << std::endl;
 
     const auto mid = std::chrono::high_resolution_clock::now();
 
-    // fill a
-    // set kernel arguments
-    checkRes( clSetKernelArg(fillKernel, 0, sizeof(cl_mem), &randState),
+
+
+    //set kernel arguments
+    checkRes( clSetKernelArg(rollKernel, 0, sizeof(cl_mem), &randState),
             "Failed to set kernal arg(state)!");
-    checkRes(clSetKernelArg(fillKernel, 1, sizeof(cl_mem), &a),
-             "Failed to set kernal arg(a)!");
+    checkRes(clSetKernelArg(rollKernel, 1, sizeof(uint64_t), &rollsPerThread),
+             "Failed to set kernal arg(reps)!");
+    checkRes(clSetKernelArg(rollKernel, 2, sizeof(uint64_t), &remainder),
+             "Failed to set kernal arg(reps)!");
+    checkRes(clSetKernelArg(rollKernel, 3, sizeof(cl_mem), &tally),
+             "Failed to set kernal arg(tally)!");
 
-
-
-    //enqueu kernel
-    checkRes( clEnqueueNDRangeKernel(commandQueue, fillKernel, 1, 0, &globalWorkSize, &localWorkSize, 0, nullptr, nullptr),
-            "Failed to enqueue kernel(fill a)!");
-
-    clFinish(commandQueue);
-
-    // fill b
-    // set kernel arguments
-
-    checkRes( clSetKernelArg(fillKernel, 0, sizeof(cl_mem), &randState),
-            "Failed to set kernal arg(state)!");
-
-    checkRes( clSetKernelArg(fillKernel, 1, sizeof(cl_mem), &b),
-            "Failed to set kernal arg(b)!");
-
-    // enqueue kernel
-    checkRes( clEnqueueNDRangeKernel(commandQueue, fillKernel, 1, 0, &globalWorkSize, &localWorkSize, 0, nullptr, nullptr),
-            "Failed to enqueue kernel(fill b)!");
+    //enqueue kernel
+    checkRes( clEnqueueNDRangeKernel(commandQueue, rollKernel, 1, 0, &globalWorkSize, &localWorkSize, 0, nullptr, nullptr),
+            "Failed to enqueue roll kernel!");
 
     clFinish(commandQueue);
 
-    //comparison
-    checkRes( clSetKernelArg(compKernel, 0, sizeof(cl_mem), &a), 
-            "Failed to set kernal arg(a for comp)!");
-
-    checkRes( clSetKernelArg(compKernel, 1, sizeof(uint), &sqRolls),
-            "Failed to set kernal arg(a size)!");
-
-    checkRes( clSetKernelArg(compKernel, 2, sizeof(cl_mem), &b),
-            "Failed to set kernal arg(b for comp)!");
-
-    // local buffer
-    checkRes( clSetKernelArg(compKernel, 3, localWorkSize * 20 * sizeof(ulong), nullptr),
-            "Failed to set kernal arg(local tally)!");
-
-    checkRes( clSetKernelArg(compKernel, 4, sizeof(cl_mem), &tally),
-            "Failed to set kernal arg(global tally)!");
-
-    // enqueue kernel
-    checkRes( clEnqueueNDRangeKernel(commandQueue, compKernel, 1, 0, &globalWorkSize, &localWorkSize, 0, nullptr, nullptr),
-            "Failed to enqueue kernel!");
-
-    // enqueue reads
-    checkRes( clEnqueueReadBuffer(commandQueue, a, CL_TRUE, 0, sqRolls * sizeof(uint), aData.data(), 0, nullptr, nullptr),
-            "Failed to enqueue buffer read!(a)");
-
-    checkRes( clEnqueueReadBuffer(commandQueue, b, CL_TRUE, 0, sqRolls * sizeof(uint), bData.data(), 0, nullptr, nullptr),
-            "Failed to enqueue buffer read!(b)");
-
-    clFinish(commandQueue);
-
+    //read results
     checkRes( clEnqueueReadBuffer(commandQueue, tally, CL_TRUE, 0, 20 * sizeof(ulong), tallyData, 0, nullptr, nullptr),
             "Failed to enqueue buffer read!(tally)");
 
@@ -449,8 +403,8 @@ int main(int argc, char* argv[])
 
 
 
-    ulong hostTally[20] = {0};
-     hostComp(aData.data(), bData.data(), sqRolls, hostTally);
+    //ulong hostTally[20] = {0};
+    //hostComp(aData.data(), bData.data(), sqRolls, hostTally);
 
     const auto end = std::chrono::high_resolution_clock::now();
 	const std::chrono::duration<double, std::milli> totTime = end - start;
@@ -464,22 +418,20 @@ int main(int argc, char* argv[])
     std::cout << "results!: \n";
     std::cout << std::endl;
 
+    ulong tot = 0;
+
     for(int i = 0; i < 20; i++){
         ulong tst = (ulong)(rolls);
         double percent = ((long double)tallyData[i] / rolls) * 100.0;
+        tot += tallyData[i];
         //std::cout << "tally data: " << tallyData[i] << " rolls: " << rolls << " quotient: " << tallyData[i] / (ulong)rolls << "\n\n";
         std::cout << i+1 << "\t: " << tallyData[i] << "\t: " << percent << "%" << std::endl;
     }
 
-    std::cout << std::endl;
-    std::cout << "results!()host comp: \n";
-    std::cout << std::endl;
-
-    for(int i = 0; i < 20; i++){
-        ulong tst = (ulong)(rolls);
-        double percent = ((long double)hostTally[i] / rolls) * 100.0;
-        //std::cout << "tally data: " << tallyData[i] << " rolls: " << rolls << " quotient: " << tallyData[i] / (ulong)rolls << "\n\n";
-        std::cout << i+1 << "\t: " << hostTally[i] << "\t: " << percent << "%" << std::endl;
+    if(tot == rolls){
+        std::cout << "yarp, rolled good" << std::endl;
+    }else{
+        std::cout << "nurp, rolled real ass fuckface" << std::endl;
     }
  
     cleanup();
