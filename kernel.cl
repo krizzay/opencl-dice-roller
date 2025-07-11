@@ -43,7 +43,7 @@ void jump(ulong* s) {
 	s[3] = s3;
 }
 
-void long_jump(ulong* s) {
+inline void long_jump(ulong* s) {
 	static const ulong JUMP[] = { 0x76e15d3efefdcbbf, 0xc5004e441c522fb3, 0x77710069854ee241, 0x39109bb02acbe635 };
 
 	ulong s0 = 0;
@@ -74,24 +74,25 @@ __kernel void roll(__global ulong* state, ulong reps, ulong remain, /*__local ui
 
 	ulong s[4];
 	for(int i = 0; i < 4; i++){
-		s[i] = state[i];
+		s[i] = state[i + (localIdx * 4)];
 	}
 
 	uint localTally[20] = {0};
 
-	// get each thread to a unique place in the random number stream for seed state
+	// get each thread to a unique place in the random number stream for given state
 	for(int i = 0; i < groupIdx; i++){
 		long_jump(s);
-	}
-	for(int i = 0; i < localIdx; i++){
-		jump(s);
 	}
 
 	if(get_global_id(0) < remain){ reps++; } // do additional rep for the remainder
 
 	// generate random numbers and populate the localTally
 	for(int i = 0; i < reps; i++){
-		localTally[max(next_x(s) % 20, next_x(s) % 20)]++;
+		// generate random 64 bit number and compare the top 32 bits module 20 with bottom 32 bits
+		// cuts down on calls to next_x
+
+		ulong rand = next_x(s);
+		localTally[max( (rand>>32) % 20, (rand & 0x00000000FFFFFFFF) % 20)]++;
 	}
 
 	// add results to global tally
