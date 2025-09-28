@@ -114,9 +114,15 @@ bool setup(const char* _fillKernelFileName){
     }
 
     for(int i = 0; i < numPlatforms; i++){
+	char version[128];
+	clGetPlatformInfo(platforms[i], CL_PLATFORM_VERSION, sizeof(version), version, NULL);
+	std::cout << "Platform version: " << version << std::endl;
+
+
         cl_device_id devices[64];
         unsigned int deviceCount;
         cl_int deviceResult = clGetDeviceIDs( platforms[i], CL_DEVICE_TYPE_GPU, 64, devices, &deviceCount);
+	std::cout << deviceCount << " devices found\n";
 
         if( deviceResult == CL_SUCCESS){
             for (int j = 0; j < deviceCount; j++){
@@ -128,7 +134,7 @@ bool setup(const char* _fillKernelFileName){
                 
                 if(deviceInfoResult == CL_SUCCESS){
                     // currently picks first device, rank by mem size ig? meh cant be bothered
-                    //std::cout << "device found!!\n";
+                    std::cout << "device found!!\n";
                     device = devices[j];
                     break;
                 }
@@ -149,7 +155,9 @@ bool setup(const char* _fillKernelFileName){
     }
 
     cl_int commandQueueResult;
-    commandQueue = clCreateCommandQueue(context, device, 0, &commandQueueResult);
+    cl_queue_properties props[] = { 0 };
+    //commandQueue = clCreateCommandQueue(context, device, 0, &commandQueueResult);
+    commandQueue = clCreateCommandQueueWithProperties(context, device, props, &commandQueueResult);
     if (commandQueueResult != CL_SUCCESS){
         std::cerr << "Failed to make command queue!\n Failed with error (" << commandQueueResult << ")\n";
         return false;
@@ -209,13 +217,12 @@ void cleanup(){
     //clReleaseDevice(device); // not needed??
 }
 
-int inline checkRes(cl_int res, std::string txt){
-    if(res != CL_SUCCESS){
-        std::cerr << txt << "\n Failed with error (" << res << ")\n";
-        cleanup();
-        return 1;
-    }
-}
+#define CHECK_RES(res, txt) \
+		if(res != CL_SUCCESS){ \
+				std::cerr << txt << "\n Failed with error (" << res << ")\n"; \
+				cleanup(); \
+				return 1; \
+		} \
 
 int main(int argc, char* argv[])
 {
@@ -257,7 +264,7 @@ int main(int argc, char* argv[])
 
     // query max local work group size
     size_t maxLocalWorkSize;
-    checkRes( clGetKernelWorkGroupInfo(rollKernel, device, CL_KERNEL_WORK_GROUP_SIZE, sizeof(size_t), &maxLocalWorkSize, nullptr),
+    CHECK_RES( clGetKernelWorkGroupInfo(rollKernel, device, CL_KERNEL_WORK_GROUP_SIZE, sizeof(size_t), &maxLocalWorkSize, nullptr),
             "Failed to query work group info!");
     std::cout << "max local work size - " << maxLocalWorkSize << std::endl;
 
@@ -270,7 +277,7 @@ int main(int argc, char* argv[])
     std::cout << "global size - " << globalWorkSize << " local size - " << localWorkSize  << " remainder : " << remainder << std::endl;
 
     std::vector<ulong> state;
-    int stateNum = localWorkSize 
+    int stateNum = localWorkSize; 
     state.resize(4 * stateNum); 
 
     // initialise randomiser state
@@ -292,7 +299,7 @@ int main(int argc, char* argv[])
         std::cerr << "Failed to create buffer rand state!\n Failed with error (" << randStateResult << ")\n";
         return 1;
     }
-    checkRes( clEnqueueWriteBuffer(commandQueue, randState, CL_TRUE, 0, stateNum * 4 * sizeof(ulong), state.data(), 0, nullptr, &events[0]),
+    CHECK_RES( clEnqueueWriteBuffer(commandQueue, randState, CL_TRUE, 0, stateNum * 4 * sizeof(ulong), state.data(), 0, nullptr, &events[0]),
             "Failed to enqueue buffer write (state)!");
 
     clFlush(commandQueue);
@@ -306,7 +313,7 @@ int main(int argc, char* argv[])
         std::cerr << "Failed to create tally buffer!\n Failed with error (" << tallyBufferResult << ")\n";
         return 1;
     }
-    checkRes( clEnqueueWriteBuffer(commandQueue, tally, CL_TRUE, 0, 20 * sizeof(uint64_t), tallyData, 0, nullptr, &events[1]),
+    CHECK_RES( clEnqueueWriteBuffer(commandQueue, tally, CL_TRUE, 0, 20 * sizeof(uint64_t), tallyData, 0, nullptr, &events[1]),
             "Failed to enqueue buffer write(tally)!" );
 
     clFlush(commandQueue);
@@ -316,23 +323,23 @@ int main(int argc, char* argv[])
 
 
     //set kernel arguments
-    checkRes( clSetKernelArg(rollKernel, 0, sizeof(cl_mem), &randState),
+    CHECK_RES( clSetKernelArg(rollKernel, 0, sizeof(cl_mem), &randState),
             "Failed to set kernal arg(state)!");
-    checkRes(clSetKernelArg(rollKernel, 1, sizeof(uint64_t), &rollsPerThread),
+    CHECK_RES(clSetKernelArg(rollKernel, 1, sizeof(uint64_t), &rollsPerThread),
              "Failed to set kernal arg(reps)!");
-    checkRes(clSetKernelArg(rollKernel, 2, sizeof(uint64_t), &remainder),
+    CHECK_RES(clSetKernelArg(rollKernel, 2, sizeof(uint64_t), &remainder),
              "Failed to set kernal arg(reps)!");
-    checkRes(clSetKernelArg(rollKernel, 3, sizeof(cl_mem), &tally),
+    CHECK_RES(clSetKernelArg(rollKernel, 3, sizeof(cl_mem), &tally),
              "Failed to set kernal arg(tally)!");
 
     //enqueue kernel
-    checkRes( clEnqueueNDRangeKernel(commandQueue, rollKernel, 1, 0, &globalWorkSize, &localWorkSize, 2, events, nullptr),
+    CHECK_RES( clEnqueueNDRangeKernel(commandQueue, rollKernel, 1, 0, &globalWorkSize, &localWorkSize, 2, events, nullptr),
             "Failed to enqueue roll kernel!");
 
     clFinish(commandQueue);
 
     //read results
-    checkRes( clEnqueueReadBuffer(commandQueue, tally, CL_TRUE, 0, 20 * sizeof(ulong), tallyData, 0, nullptr, nullptr),
+    CHECK_RES( clEnqueueReadBuffer(commandQueue, tally, CL_TRUE, 0, 20 * sizeof(ulong), tallyData, 0, nullptr, nullptr),
             "Failed to enqueue buffer read!(tally)");
 
     clFinish(commandQueue);
