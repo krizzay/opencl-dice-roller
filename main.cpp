@@ -42,6 +42,7 @@ static inline uint64_t rotl(const uint64_t x, int k) {
 	return (x << k) | (x >> (64 - k));
 }
 
+//xoroshiro
 uint64_t next_x(uint64_t* s) {
 	const uint64_t result = s[0] + s[3];
 
@@ -101,7 +102,7 @@ int getLocalWorkSize(size_t maxLocalSize, int globalSize){
     return result;
 }
 
-bool setup(const char* _fillKernelFileName){
+bool setup(const char* _KernelFileName){
     cl_int platformResult = CL_SUCCESS;
     cl_uint numPlatforms = 0;
     cl_platform_id platforms[64];
@@ -133,7 +134,7 @@ bool setup(const char* _fillKernelFileName){
 
                 
                 if(deviceInfoResult == CL_SUCCESS){
-                    // currently picks first device, rank by mem size ig? meh cant be bothered
+                    // currently picks first device, rank by mem size ig?
                     std::cout << "device found!!\n";
                     device = devices[j];
                     break;
@@ -163,14 +164,14 @@ bool setup(const char* _fillKernelFileName){
         return false;
     }
 
-    // create fill program and kernel
-    std::string s = readFile(_fillKernelFileName);
+    // create program and kernel
+    std::string s = readFile(_KernelFileName);
     const char* programSource = s.c_str();
     size_t length = 0;
     cl_int programResult;
     rollProgram = clCreateProgramWithSource(context, 1, &programSource, &length, &programResult);
     if (programResult != CL_SUCCESS){
-        std::cerr << "Failed to make program!(fill)\n Failed with error (" << programResult << ")\n";
+        std::cerr << "Failed to make program!\n Failed with error (" << programResult << ")\n";
         return false;
     }
 
@@ -192,7 +193,7 @@ bool setup(const char* _fillKernelFileName){
         }
         
         if (programBuildInfoResult != CL_SUCCESS){
-            std::cerr << "Failed to build program!(fill)\n Failed with error (" << programBuildInfoResult << ")\n";
+            std::cerr << "Failed to build program!\n Failed with error (" << programBuildInfoResult << ")\n";
             return false;
         }
     }
@@ -200,7 +201,7 @@ bool setup(const char* _fillKernelFileName){
     cl_int kernelResult;              // this string must mach entry function name
 	rollKernel = clCreateKernel( rollProgram, "roll", &kernelResult);
     if (programResult != CL_SUCCESS){
-        std::cerr << "Failed to make kernel!(fill)\n Failed with error (" << programResult << ")\n";
+        std::cerr << "Failed to make kernel!\n Failed with error (" << programResult << ")\n";
         return false;
     }
 
@@ -248,7 +249,7 @@ int main(int argc, char* argv[])
         rolls *= 1000000000000;
     }
     else{
-        std::cerr << "bad mult dumbass\n";
+        std::cerr << "bad multiplier\n";
         return 1;
     }
     
@@ -366,9 +367,9 @@ int main(int argc, char* argv[])
     }
 
     if(tot == rolls){
-        std::cout << "yarp, rolled good" << std::endl;
+        std::cout << "rolled good" << std::endl;
     }else{
-        std::cout << "nurp, rolled real ass fuckface" << std::endl;
+        std::cout << "rolled wrong amount" << std::endl;
     }
  
     cleanup();
